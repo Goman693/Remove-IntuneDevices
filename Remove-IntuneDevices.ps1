@@ -153,13 +153,13 @@ foreach ($CurrentComputer in $ImportedData) {
 
             # Find in Autopilot
             $DeviceLog.Autopilot = "Not found"
-            $AutopilotDevices = Get-MgDeviceManagementWindowAutopilotDeviceIdentity -Filter "contains(SerialNumber,'$SerialNumber')"
+            $AutopilotDevices = Get-MgDeviceManagementWindowsAutopilotDeviceIdentity -Filter "contains(SerialNumber,'$SerialNumber')"
 
             # Remove from Autopilot if found; also attempts AAD removal
             foreach ($AutopilotDevice in $AutopilotDevices) {
                 $DeviceLog.Autopilot = "Found"
                 Try {
-                    Remove-MgDeviceManagementWindowAutopilotDeviceIdentity -WindowsAutopilotDeviceIdentityId $AutopilotDevice.Id -ErrorAction SilentlyContinue
+                    Remove-MgDeviceManagementWindowsAutopilotDeviceIdentity -WindowsAutopilotDeviceIdentityId $AutopilotDevice.Id -ErrorAction SilentlyContinue
                     $DeviceLog.Autopilot = "Deleted"
                     Write-Host "Deleted $($AutopilotDevice.Id) from Autopilot" -ForegroundColor Green
                 }
