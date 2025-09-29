@@ -17,7 +17,7 @@ function Get-CsvPath {
     )
 
     $FileBrowser = New-Object System.Windows.Forms.OpenFileDialog -Property @{ 
-        InitialDirectory = [Environment]::GetFolderPath("Desktop") 
+        InitialDirectory = "C:\Users\conwelker\OneDrive - Harford County Public Schools\Documents\Software\Remove-IntuneDevices"
         Filter           = "CSV files (*.csv)|*.csv"
         Multiselect      = $False
         Title            = $Title
@@ -85,15 +85,43 @@ if ("SerialNumber" -notin ($ImportedData[0].psobject.Properties).name) {
     Exit
 }
 
-# Set logging path and output to terminal
+# # Set logging path and output to terminal
+# try {
+#     $LogPath = $(Split-Path $(Resolve-Path $CSVPath)) + "\Log_" + $(Get-Date -Format "yyyy-MM-dd_hh-mm-ss") + ".csv"
+# }
+# catch {
+#     $LogPath = $PSScriptRoot + "\Log_" + $(Get-Date -Format "yyyy-MM-dd_hh-mm-ss") + ".csv"
+# }
+# Write-Host "Results will be logged to " -NoNewline
+# Write-Host $LogPath -ForegroundColor Cyan
+
+# Determine log directory
 try {
-    $LogPath = $(Split-Path $(Resolve-Path $CSVPath)) + "\Log_" + $(Get-Date -Format "yyyy-MM-dd_hh-mm-ss") + ".csv"
+    $LogDirectory = Split-Path (Resolve-Path $CSVPath)
 }
 catch {
-    $LogPath = $PSScriptRoot + "\Log_" + $(Get-Date -Format "yyyy-MM-dd_hh-mm-ss") + ".csv"
+    $LogDirectory = $PSScriptRoot
 }
+
+# Rotate logs: keep only 5 newest, delete oldest if already 5
+$ExistingLogs = Get-ChildItem -Path $LogDirectory -Filter "Log_*.csv" | Sort-Object LastWriteTime
+if ($ExistingLogs.Count -ge 5) {
+    $OldestLog = $ExistingLogs[0]
+    try {
+        Remove-Item -Path $OldestLog.FullName -Force
+        Write-Host "Deleted oldest log file: $($OldestLog.Name)" -ForegroundColor Yellow
+    }
+    catch {
+        Write-Host "Failed to delete oldest log file: $($OldestLog.Name)" -ForegroundColor Red
+        $_
+    }
+}
+
+# Create new log file path
+$LogPath = Join-Path $LogDirectory ("Log_" + (Get-Date -Format "yyyy-MM-dd_HH-mm-ss") + ".csv")
 Write-Host "Results will be logged to " -NoNewline
 Write-Host $LogPath -ForegroundColor Cyan
+
 
 # Load required modules
 Write-Host "Importing Graph..."
