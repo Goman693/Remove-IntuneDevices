@@ -1,4 +1,4 @@
-﻿[CmdletBinding(DefaultParameterSetName = "All")]
+[CmdletBinding(DefaultParameterSetName = "All")]
 Param (
     [Parameter(HelpMessage = "Path to CSV file with column named SerialNumber", Position = 0)]
     [string] $CSVPath,
@@ -16,16 +16,21 @@ function Get-CsvPath {
         [string]$Title = "Choose .CSV file with SerialNumber column"
     )
 
+    # Always default to user's Documents\Remove-IntuneDevices
+    $DefaultFolder = Join-Path $([Environment]::GetFolderPath("MyDocuments")) "Remove-IntuneDevices"
+    if (-not (Test-Path $DefaultFolder)) {
+        New-Item -Path $DefaultFolder -ItemType Directory | Out-Null
+    }
+
     $FileBrowser = New-Object System.Windows.Forms.OpenFileDialog -Property @{ 
-        InitialDirectory = "C:\Users\conwelker\OneDrive - Harford County Public Schools\Documents\Software\Remove-IntuneDevices"
+        InitialDirectory = $DefaultFolder
         Filter           = "CSV files (*.csv)|*.csv"
         Multiselect      = $False
         Title            = $Title
     }
-    # Send to null to avoid "Cancel" or "OK" being prepended to return value
-    $null = $FileBrowser.ShowDialog()
 
-    Return $FileBrowser.FileName
+    $null = $FileBrowser.ShowDialog()
+    return $FileBrowser.FileName
 }
 
 # Open file picker if path is not specified
@@ -63,12 +68,10 @@ if (-Not $Interactive) {
 
 # Get serial numbers from user interactively
 if ($Interactive) {
-    # Interactive mode
     Write-Host "Interactive mode. Enter serial numbers to remove from Intune. Enter a blank line when finished."
     $ImportedData = @()
     $SerialNumber = "-"
 
-    # Get serial numbers until user enters blank line
     while ($SerialNumber -ne "") {
         $SerialNumber = Read-Host "Enter serial number"
         if ($SerialNumber -ne "") {
@@ -85,19 +88,12 @@ if ("SerialNumber" -notin ($ImportedData[0].psobject.Properties).name) {
     Exit
 }
 
-# # Set logging path and output to terminal
-# try {
-#     $LogPath = $(Split-Path $(Resolve-Path $CSVPath)) + "\Log_" + $(Get-Date -Format "yyyy-MM-dd_hh-mm-ss") + ".csv"
-# }
-# catch {
-#     $LogPath = $PSScriptRoot + "\Log_" + $(Get-Date -Format "yyyy-MM-dd_hh-mm-ss") + ".csv"
-# }
-# Write-Host "Results will be logged to " -NoNewline
-# Write-Host $LogPath -ForegroundColor Cyan
-
-# Determine log directory
+# Determine log directory (always Documents\Remove-IntuneDevices)
 try {
-    $LogDirectory = Split-Path (Resolve-Path $CSVPath)
+    $LogDirectory = Join-Path $([Environment]::GetFolderPath("MyDocuments")) "Remove-IntuneDevices"
+    if (-not (Test-Path $LogDirectory)) {
+        New-Item -Path $LogDirectory -ItemType Directory | Out-Null
+    }
 }
 catch {
     $LogDirectory = $PSScriptRoot
@@ -121,7 +117,6 @@ if ($ExistingLogs.Count -ge 5) {
 $LogPath = Join-Path $LogDirectory ("Log_" + (Get-Date -Format "yyyy-MM-dd_HH-mm-ss") + ".csv")
 Write-Host "Results will be logged to " -NoNewline
 Write-Host $LogPath -ForegroundColor Cyan
-
 
 # Load required modules
 Write-Host "Importing Graph..."
@@ -149,12 +144,9 @@ foreach ($CurrentComputer in $ImportedData) {
 
     # Delete from Intune
     Try {
-
-        # Find device/s in Intune
         $DeviceLog.Intune = "Not found"
         $IntuneDevices = Get-MgDeviceManagementManagedDevice –Filter "SerialNumber eq '$SerialNumber'" –ErrorAction SilentlyContinue
 
-        # Delete from Intune
         foreach ($IntuneDevice in $IntuneDevices) {
             $DeviceLog.Intune = "Found"
             Try {
@@ -178,12 +170,9 @@ foreach ($CurrentComputer in $ImportedData) {
     # Delete from Autopilot and AAD if -AutopilotAAD
     if ($AutopilotAAD) {
         Try {
-
-            # Find in Autopilot
             $DeviceLog.Autopilot = "Not found"
             $AutopilotDevices = Get-MgDeviceManagementWindowsAutopilotDeviceIdentity -Filter "contains(SerialNumber,'$SerialNumber')"
 
-            # Remove from Autopilot if found; also attempts AAD removal
             foreach ($AutopilotDevice in $AutopilotDevices) {
                 $DeviceLog.Autopilot = "Found"
                 Try {
@@ -197,11 +186,9 @@ foreach ($CurrentComputer in $ImportedData) {
                     $_
                 }
 
-                # Look for device in AAD
                 $DeviceLog.AzureAD = "Not found"
                 $AADDevice = Get-MgDevice -Filter "DeviceId eq '$($AutopilotDevice.AzureActiveDirectoryDeviceId)'"
 
-                # Delete device if found
                 if ($AADDevice) {
                     $DeviceLog.AzureAD = "Found"
                     Try {
