@@ -1,3 +1,26 @@
+<#
+.SYNOPSIS
+    Removes devices from Intune, optionally including Autopilot and Azure AD.
+
+.DESCRIPTION
+    - Accepts a CSV file with a "SerialNumber" column, or allows interactive input.
+    - Sanitizes serial numbers to prevent Graph query errors.
+    - Optionally removes devices from Intune, Autopilot, and Azure AD.
+    - Logs all results with automatic log rotation (keeps 5 newest logs).
+
+.PARAMETER CSVPath
+    Path to a CSV file containing a column named SerialNumber.
+
+.PARAMETER AutopilotAAD
+    If specified, also removes matching devices from Autopilot and Azure AD.
+
+.PARAMETER Interactive
+    Prompts for manual serial number entry instead of reading from a CSV.
+
+.NOTES
+    Requires Microsoft.Graph.Intune module and appropriate Graph permissions.
+#>
+
 [CmdletBinding(DefaultParameterSetName = "All")]
 Param (
     [Parameter(HelpMessage = "Path to CSV file with column named SerialNumber", Position = 0)]
@@ -10,34 +33,29 @@ Param (
     [switch] $Interactive
 )
 
-# Function to get path of a CSV file using a graphical file picker
+# --- Function: Graphical CSV picker ---
 function Get-CsvPath {
     param (
         [string]$Title = "Choose .CSV file with SerialNumber column"
     )
 
-    # Always default to user's Documents\Remove-IntuneDevices
-    $DefaultFolder = Join-Path $([Environment]::GetFolderPath("MyDocuments")) "Remove-IntuneDevices"
-    if (-not (Test-Path $DefaultFolder)) {
-        New-Item -Path $DefaultFolder -ItemType Directory | Out-Null
-    }
-
     $FileBrowser = New-Object System.Windows.Forms.OpenFileDialog -Property @{ 
-        InitialDirectory = $DefaultFolder
+        InitialDirectory = "C:\Users\conwelker\OneDrive - Harford County Public Schools\Documents\Software\Remove-IntuneDevices"
         Filter           = "CSV files (*.csv)|*.csv"
         Multiselect      = $False
         Title            = $Title
     }
-
     $null = $FileBrowser.ShowDialog()
     return $FileBrowser.FileName
 }
 
-# Open file picker if path is not specified
+# --- Load Windows Forms for file picker ---
 Add-Type -AssemblyName System.Windows.Forms
+
+# --- Determine mode and get CSV path ---
 if (-Not $CSVPath -and -Not $Interactive) {
     $AutopilotAAD = $false
-    $CSVPath = Get-CsvPath -Title "CSV to remove from Intune (or Cancel for Autopilot/AAD removal). Must have SerialNumber column."
+    $CSVPath = Get-CsvPath -Title "CSV to remove from Intune (Cancel for Autopilot/AAD removal). Must have SerialNumber column."
 
     if (-Not $CSVPath) {
         $AutopilotAAD = $true
@@ -45,62 +63,48 @@ if (-Not $CSVPath -and -Not $Interactive) {
     }
 }
 
-# Import CSV
+# --- Import CSV or enter serials manually ---
 if (-Not $Interactive) {
-    Try {
-        $ImportedData = Import-Csv $CSVPath
-
-        # Output type of removal
-        Write-Host "Import succesful. Devices will be removed from " -NoNewline
+    try {
+        $ImportedData = Import-Csv -Path $CSVPath -Encoding UTF8
+        Write-Host "Import successful. Devices will be removed from " -NoNewline
         if ($AutopilotAAD) {
-            Write-Host "Intune, Autopilot, and Azure AD" -ForegroundColor Cyan -NoNewline
+            Write-Host "Intune, Autopilot, and Azure AD" -ForegroundColor Cyan
+        } else {
+            Write-Host "Intune" -ForegroundColor Cyan
         }
-        Else {
-            Write-Host "Intune" -ForegroundColor Cyan -NoNewline
-        }
-        Write-Host "."
     }
-    Catch {
-        Write-Host "Error importing CSV" -ForegroundColor Red
+    catch {
+        Write-Host "Error importing CSV. Switching to interactive mode." -ForegroundColor Red
         $Interactive = $true
     }
 }
 
-# Get serial numbers from user interactively
 if ($Interactive) {
-    Write-Host "Interactive mode. Enter serial numbers to remove from Intune. Enter a blank line when finished."
+    Write-Host "Interactive mode enabled. Enter serial numbers to remove. Press Enter on a blank line to finish."
     $ImportedData = @()
-    $SerialNumber = "-"
-
-    while ($SerialNumber -ne "") {
+    while ($true) {
         $SerialNumber = Read-Host "Enter serial number"
-        if ($SerialNumber -ne "") {
-            $ImportedData += [PSCustomObject]@{
-                SerialNumber = $SerialNumber
-            }
-        }
+        if ([string]::IsNullOrWhiteSpace($SerialNumber)) { break }
+        $ImportedData += [PSCustomObject]@{ SerialNumber = $SerialNumber }
     }
 }
 
-# Make sure CSV contains proper column
-if ("SerialNumber" -notin ($ImportedData[0].psobject.Properties).name) {
-    Write-Host "CSV does not contain column SerialNumber" -ForegroundColor Red
-    Exit
+# --- Validate CSV structure ---
+if (-not $ImportedData -or "SerialNumber" -notin ($ImportedData[0].psobject.Properties).Name) {
+    Write-Host "CSV must contain a 'SerialNumber' column." -ForegroundColor Red
+    exit
 }
 
-# Determine log directory (always Documents\Remove-IntuneDevices)
+# --- Log setup and rotation ---
 try {
-    $LogDirectory = Join-Path $([Environment]::GetFolderPath("MyDocuments")) "Remove-IntuneDevices"
-    if (-not (Test-Path $LogDirectory)) {
-        New-Item -Path $LogDirectory -ItemType Directory | Out-Null
-    }
+    $LogDirectory = Split-Path (Resolve-Path $CSVPath)
 }
 catch {
     $LogDirectory = $PSScriptRoot
 }
 
-# Rotate logs: keep only 5 newest, delete oldest if already 5
-$ExistingLogs = Get-ChildItem -Path $LogDirectory -Filter "Log_*.csv" | Sort-Object LastWriteTime
+$ExistingLogs = Get-ChildItem -Path $LogDirectory -Filter "Log_*.csv" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime
 if ($ExistingLogs.Count -ge 5) {
     $OldestLog = $ExistingLogs[0]
     try {
@@ -109,108 +113,146 @@ if ($ExistingLogs.Count -ge 5) {
     }
     catch {
         Write-Host "Failed to delete oldest log file: $($OldestLog.Name)" -ForegroundColor Red
-        $_
     }
 }
 
-# Create new log file path
 $LogPath = Join-Path $LogDirectory ("Log_" + (Get-Date -Format "yyyy-MM-dd_HH-mm-ss") + ".csv")
 Write-Host "Results will be logged to " -NoNewline
 Write-Host $LogPath -ForegroundColor Cyan
 
-# Load required modules
-Write-Host "Importing Graph..."
-Import-Module Microsoft.Graph.Intune –ErrorAction Stop
+# --- Graph setup ---
+Write-Host "Importing Microsoft Graph Intune module..."
+Import-Module Microsoft.Graph.Intune -ErrorAction Stop
 
-# Authenticate with Intune
-Write-Host "Authenticating with MS Graph..."
+Write-Host "Authenticating with Microsoft Graph..."
 Connect-MgGraph -Scopes "DeviceManagementServiceConfig.ReadWrite.All", "DeviceManagementManagedDevices.ReadWrite.All", "Directory.AccessAsUser.All" -ErrorAction Stop
 
-# Iterate through computers
-foreach ($CurrentComputer in $ImportedData) {
-    $SerialNumber = $CurrentComputer.SerialNumber.ToUpper()
+# --- Process devices ---
+$Total = $ImportedData.Count
+$Count = 0
 
-    # Info for logging
+foreach ($CurrentComputer in $ImportedData) {
+    $Count++
+    $Percent = [int](($Count / $Total) * 100)
+    Write-Progress -Activity "Removing Devices from Intune" -Status "$Count of $Total ($Percent%)" -PercentComplete $Percent
+
+    $SerialNumber = $CurrentComputer.SerialNumber.ToUpper()
+    $CleanSerial = ($SerialNumber -replace '[^0-9A-Za-z-]', '').Trim()
+
+    if ($CleanSerial -ne $SerialNumber) {
+        Write-Host "Sanitized serial from '$SerialNumber' to '$CleanSerial'" -ForegroundColor Yellow
+    }
+
     $DeviceLog = [PSCustomObject]@{
-        SerialNumber = $SerialNumber
+        SerialNumber = $CleanSerial
         Intune       = "Not attempted"
         Autopilot    = "Not attempted"
         AzureAD      = "Not attempted"
     }
 
-    Write-Host "Processing " -NoNewline
-    Write-Host $($SerialNumber) –ForegroundColor Cyan -NoNewline
-    Write-Host "..."
+    Write-Host "Processing $CleanSerial..." -ForegroundColor Cyan
 
-    # Delete from Intune
-    Try {
+    # --- Intune Removal ---
+    try {
         $DeviceLog.Intune = "Not found"
-        $IntuneDevices = Get-MgDeviceManagementManagedDevice –Filter "SerialNumber eq '$SerialNumber'" –ErrorAction SilentlyContinue
+        $IntuneDevices = Get-MgDeviceManagementManagedDevice `
+            -Filter "SerialNumber eq '$CleanSerial'" -ErrorAction SilentlyContinue
 
         foreach ($IntuneDevice in $IntuneDevices) {
             $DeviceLog.Intune = "Found"
-            Try {
-                Remove-MgDeviceManagementManagedDevice –ManagedDeviceId $IntuneDevice.Id –ErrorAction SilentlyContinue
+            try {
+                Remove-MgDeviceManagementManagedDevice -ManagedDeviceId $IntuneDevice.Id -ErrorAction SilentlyContinue
                 $DeviceLog.Intune = "Deleted"
-                Write-Host "Deleted $($IntuneDevice.deviceName) from Intune" –ForegroundColor Green
+                Write-Host "Deleted $($IntuneDevice.deviceName) from Intune" -ForegroundColor Green
             }
-            Catch {
+            catch {
                 $DeviceLog.Intune = "Error deleting"
-                Write-Host "Error deleting $($IntuneDevice.deviceName) from Intune" –ForegroundColor Red
-                $_
+                Write-Host "Error deleting $($IntuneDevice.deviceName) from Intune" -ForegroundColor Red
             }
         }
+
+        if (-not $IntuneDevices) {
+            Write-Host "No Intune devices found for $CleanSerial" -ForegroundColor DarkGray
+        }
     }
-    Catch {
+    catch {
         $DeviceLog.Intune = "Error finding"
-        Write-Host "Error finding $SerialNumber in Intune" –ForegroundColor Red
-        $_
+        Write-Host "Error finding $CleanSerial in Intune" -ForegroundColor Red
     }
 
-    # Delete from Autopilot and AAD if -AutopilotAAD
+    # --- Autopilot + AAD Removal ---
     if ($AutopilotAAD) {
-        Try {
+        try {
+            Write-Host "Searching Autopilot for $CleanSerial..." -ForegroundColor Gray
             $DeviceLog.Autopilot = "Not found"
-            $AutopilotDevices = Get-MgDeviceManagementWindowsAutopilotDeviceIdentity -Filter "contains(SerialNumber,'$SerialNumber')"
+            $AutopilotDevices = @()
+
+            try {
+                $AutopilotDevices = Get-MgDeviceManagementWindowsAutopilotDeviceIdentity `
+                    -Filter "SerialNumber eq '$CleanSerial'" -ErrorAction Stop
+            }
+            catch {
+                Write-Host "Exact match failed, retrying partial search..." -ForegroundColor DarkYellow
+            }
+
+            if (-not $AutopilotDevices) {
+                try {
+                    $AutopilotDevices = Get-MgDeviceManagementWindowsAutopilotDeviceIdentity `
+                        -Filter "contains(serialNumber,'$CleanSerial')" -ErrorAction Stop
+                }
+                catch {
+                    Write-Host "Error searching for $CleanSerial in Autopilot" -ForegroundColor Red
+                    throw
+                }
+            }
 
             foreach ($AutopilotDevice in $AutopilotDevices) {
                 $DeviceLog.Autopilot = "Found"
-                Try {
-                    Remove-MgDeviceManagementWindowsAutopilotDeviceIdentity -WindowsAutopilotDeviceIdentityId $AutopilotDevice.Id -ErrorAction SilentlyContinue
+                try {
+                    Remove-MgDeviceManagementWindowsAutopilotDeviceIdentity `
+                        -WindowsAutopilotDeviceIdentityId $AutopilotDevice.Id -ErrorAction SilentlyContinue
                     $DeviceLog.Autopilot = "Deleted"
-                    Write-Host "Deleted $($AutopilotDevice.Id) from Autopilot" -ForegroundColor Green
+                    Write-Host "Deleted Autopilot record ID $($AutopilotDevice.Id)" -ForegroundColor Green
                 }
-                Catch {
+                catch {
                     $DeviceLog.Autopilot = "Error deleting"
-                    Write-Host "Error deleting $($AutopilotDevice.Id) from Autopilot" -ForegroundColor Red
-                    $_
+                    Write-Host "Error deleting Autopilot record ID $($AutopilotDevice.Id)" -ForegroundColor Red
                 }
 
+                # Linked AAD removal
                 $DeviceLog.AzureAD = "Not found"
-                $AADDevice = Get-MgDevice -Filter "DeviceId eq '$($AutopilotDevice.AzureActiveDirectoryDeviceId)'"
-
-                if ($AADDevice) {
-                    $DeviceLog.AzureAD = "Found"
-                    Try {
-                        Remove-MgDevice -DeviceId $AADDevice.Id -ErrorAction SilentlyContinue
-                        $DeviceLog.AzureAD = "Deleted"
-                        Write-Host "Deleted $($AADDevice.Id) from Azure AD" -ForegroundColor Green
+                if ($AutopilotDevice.AzureActiveDirectoryDeviceId) {
+                    try {
+                        $AADDevice = Get-MgDevice `
+                            -Filter "DeviceId eq '$($AutopilotDevice.AzureActiveDirectoryDeviceId)'" `
+                            -ErrorAction Stop
+                        if ($AADDevice) {
+                            $DeviceLog.AzureAD = "Found"
+                            Remove-MgDevice -DeviceId $AADDevice.Id -ErrorAction SilentlyContinue
+                            $DeviceLog.AzureAD = "Deleted"
+                            Write-Host "Deleted Azure AD device $($AADDevice.Id)" -ForegroundColor Green
+                        }
                     }
-                    Catch {
+                    catch {
                         $DeviceLog.AzureAD = "Error deleting"
-                        Write-Host "Error deleting $($AADDevice.Id) from Azure AD" -ForegroundColor Red
-                        $_
+                        Write-Host "Error deleting Azure AD device for $CleanSerial" -ForegroundColor Red
                     }
                 }
             }
+
+            if (-not $AutopilotDevices) {
+                Write-Host "No Autopilot records found for $CleanSerial" -ForegroundColor DarkGray
+            }
         }
-        Catch {
+        catch {
             $DeviceLog.Autopilot = "Error finding"
-            Write-Host "Error finding $SerialNumber in Autopilot"
-            $_
+            Write-Host "Error processing $CleanSerial in Autopilot/AAD" -ForegroundColor Red
         }
     }
 
-    # Add to log file
+    # --- Log results ---
     Export-Csv -Path $LogPath -InputObject $DeviceLog -Append -NoTypeInformation
 }
+
+Write-Host "`nAll operations completed. Log saved to:" -ForegroundColor Cyan
+Write-Host $LogPath -ForegroundColor Yellow
