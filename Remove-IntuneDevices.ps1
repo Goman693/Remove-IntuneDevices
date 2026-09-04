@@ -1,4 +1,3 @@
-```powershell
 <#
 .SYNOPSIS
     Removes devices from Intune, optionally including Autopilot and Azure AD.
@@ -317,4 +316,3 @@ foreach ($CurrentComputer in $ImportedData) {
 
 Write-Host "`nAll operations completed. Log saved to:" -ForegroundColor Cyan
 Write-Host $LogPath -ForegroundColor Yellow
-```
