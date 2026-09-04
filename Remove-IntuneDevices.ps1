@@ -271,45 +271,22 @@ foreach ($CurrentComputer in $ImportedData) {
             foreach ($AutopilotDevice in $AutopilotDevices) {
                 $DeviceLog.Autopilot = "Found"
 
-                try {
-                    Remove-MgDeviceManagementWindowsAutopilotDeviceIdentity `
-                        -WindowsAutopilotDeviceIdentityId $AutopilotDevice.Id `
-                        -ErrorAction Stop
-
-                    $DeviceLog.Autopilot = "Deleted"
-
-                    Write-Host "Deleted Autopilot record ID $($AutopilotDevice.Id)" -ForegroundColor Green
-                }
-                catch {
-                    $DeviceLog.Autopilot = "Error deleting"
-
-                    Write-Host "Error deleting Autopilot record ID $($AutopilotDevice.Id)" -ForegroundColor Red
-                }
+                # Keep the Autopilot record until Azure AD cleanup succeeds.
+                # This preserves the AzureActiveDirectoryDeviceId for retries.
+                $CanDeleteAutopilot = $true
 
                 # --- Linked Azure AD removal ---
                 $DeviceLog.AzureAD = "Not found"
 
                 if ($AutopilotDevice.AzureActiveDirectoryDeviceId) {
+
+                    # --- Find Azure AD device ---
+                    $AADDevice = $null
+
                     try {
                         $AADDevice = Get-MgDevice `
                             -Filter "DeviceId eq '$($AutopilotDevice.AzureActiveDirectoryDeviceId)'" `
                             -ErrorAction Stop
-
-                        if ($AADDevice) {
-                            $DeviceLog.AzureAD = "Found"
-
-                            Remove-MgDevice `
-                                -DeviceId $AADDevice.Id `
-                                -ErrorAction Stop
-
-                            $DeviceLog.AzureAD = "Deleted"
-
-                            Write-Host "Deleted Azure AD device $($AADDevice.Id)" -ForegroundColor Green
-                        }
-                        else {
-                            $DeviceLog.AzureAD = "Not found"
-                            Write-Host "No Azure AD device found" -ForegroundColor DarkGray
-                        }
                     }
                     catch {
                         $ErrorMessage = $_.Exception.Message
@@ -318,19 +295,86 @@ foreach ($CurrentComputer in $ImportedData) {
                             $ErrorMessage = $_.ErrorDetails.Message
                         }
 
-                        $DeviceLog.AzureAD = "Error: $ErrorMessage"
+                        $DeviceLog.AzureAD = "Error finding: $ErrorMessage"
+                        $CanDeleteAutopilot = $false
 
-                        Write-Host "Error deleting Azure AD device:" -ForegroundColor Red
+                        Write-Host "Error finding Azure AD device:" -ForegroundColor Red
                         Write-Host $ErrorMessage -ForegroundColor Red
+                    }
+
+                    # --- Delete Azure AD device ---
+                    if ($AADDevice) {
+                        $DeviceLog.AzureAD = "Found"
+
+                        try {
+                            Remove-MgDevice `
+                                -DeviceId $AADDevice.Id `
+                                -ErrorAction Stop
+
+                            $DeviceLog.AzureAD = "Deleted"
+
+                            Write-Host "Deleted Azure AD device $($AADDevice.Id)" -ForegroundColor Green
+                        }
+                        catch {
+                            $ErrorMessage = $_.Exception.Message
+
+                            if ($_.ErrorDetails.Message) {
+                                $ErrorMessage = $_.ErrorDetails.Message
+                            }
+
+                            $DeviceLog.AzureAD = "Error deleting: $ErrorMessage"
+                            $CanDeleteAutopilot = $false
+
+                            Write-Host "Error deleting Azure AD device $($AADDevice.Id):" -ForegroundColor Red
+                            Write-Host $ErrorMessage -ForegroundColor Red
+                        }
+                    }
+                    elseif ($DeviceLog.AzureAD -notlike "Error finding*") {
+                        $DeviceLog.AzureAD = "Not found"
+
+                        Write-Host "No Azure AD device found" -ForegroundColor DarkGray
                     }
                 }
                 else {
                     $DeviceLog.AzureAD = "Not found"
+
                     Write-Host "No linked Azure AD device found" -ForegroundColor DarkGray
+                }
+
+                # --- Autopilot Removal ---
+                if ($CanDeleteAutopilot) {
+                    try {
+                        Remove-MgDeviceManagementWindowsAutopilotDeviceIdentity `
+                            -WindowsAutopilotDeviceIdentityId $AutopilotDevice.Id `
+                            -ErrorAction Stop
+
+                        $DeviceLog.Autopilot = "Deleted"
+
+                        Write-Host "Deleted Autopilot record ID $($AutopilotDevice.Id)" -ForegroundColor Green
+                    }
+                    catch {
+                        $ErrorMessage = $_.Exception.Message
+
+                        if ($_.ErrorDetails.Message) {
+                            $ErrorMessage = $_.ErrorDetails.Message
+                        }
+
+                        $DeviceLog.Autopilot = "Error deleting: $ErrorMessage"
+
+                        Write-Host "Error deleting Autopilot record ID $($AutopilotDevice.Id):" -ForegroundColor Red
+                        Write-Host $ErrorMessage -ForegroundColor Red
+                    }
+                }
+                else {
+                    $DeviceLog.Autopilot = "Skipped - Azure AD error"
+
+                    Write-Host "Skipped Autopilot deletion because Azure AD cleanup failed." -ForegroundColor Yellow
+                    Write-Host "The Autopilot record was left intact so the operation can be retried." -ForegroundColor Yellow
                 }
             }
 
             if (-not $AutopilotDevices) {
+                $DeviceLog.AzureAD = "Not attempted - no Autopilot record"
                 Write-Host "No Autopilot record found" -ForegroundColor DarkGray
             }
         }
