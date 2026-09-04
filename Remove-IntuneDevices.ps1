@@ -312,8 +312,16 @@ foreach ($CurrentComputer in $ImportedData) {
                         }
                     }
                     catch {
-                        $DeviceLog.AzureAD = "Error deleting"
-                        Write-Host "Error deleting Azure AD device" -ForegroundColor Red
+                        $ErrorMessage = $_.Exception.Message
+
+                        if ($_.ErrorDetails.Message) {
+                            $ErrorMessage = $_.ErrorDetails.Message
+                        }
+
+                        $DeviceLog.AzureAD = "Error: $ErrorMessage"
+
+                        Write-Host "Error deleting Azure AD device:" -ForegroundColor Red
+                        Write-Host $ErrorMessage -ForegroundColor Red
                     }
                 }
                 else {
