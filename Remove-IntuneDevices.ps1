@@ -234,24 +234,21 @@ foreach ($CurrentComputer in $ImportedData) {
             $AutopilotDevices = @()
 
             try {
-                $AutopilotDevices = Get-MgDeviceManagementWindowsAutopilotDeviceIdentity `
-                    -Filter "SerialNumber eq '$CleanSerial'" `
-                    -ErrorAction Stop
+                # The Autopilot Graph endpoint supports contains() for serial number
+                # searches, but not eq. Use contains() server-side, then enforce an
+                # exact serial number match locally.
+                $AutopilotDevices = @(
+                    Get-MgDeviceManagementWindowsAutopilotDeviceIdentity `
+                        -Filter "contains(serialNumber,'$CleanSerial')" `
+                        -ErrorAction Stop |
+                    Where-Object {
+                        $_.SerialNumber -eq $CleanSerial
+                    }
+                )
             }
             catch {
-                Write-Host "Exact match failed, retrying partial search..." -ForegroundColor DarkYellow
-            }
-
-            if (-not $AutopilotDevices) {
-                try {
-                    $AutopilotDevices = Get-MgDeviceManagementWindowsAutopilotDeviceIdentity `
-                        -Filter "contains(serialNumber,'$CleanSerial')" `
-                        -ErrorAction Stop
-                }
-                catch {
-                    Write-Host "Error searching for $CleanSerial in Autopilot" -ForegroundColor Red
-                    throw
-                }
+                Write-Host "Error searching for $CleanSerial in Autopilot" -ForegroundColor Red
+                throw
             }
 
             foreach ($AutopilotDevice in $AutopilotDevices) {
