@@ -213,20 +213,18 @@ foreach ($CurrentComputer in $ImportedData) {
         }
 
         if (-not $IntuneDevices) {
-            Write-Host "No Intune devices found for $CleanSerial" -ForegroundColor DarkGray
+            Write-Host "No Intune device found" -ForegroundColor DarkGray
         }
     }
     catch {
         $DeviceLog.Intune = "Error finding"
 
-        Write-Host "Error finding $CleanSerial in Intune" -ForegroundColor Red
+        Write-Host "Error finding Intune device" -ForegroundColor Red
     }
 
     # --- Autopilot + Azure AD Removal ---
     if ($AutopilotAAD) {
         try {
-            Write-Host "Searching Autopilot for $CleanSerial..." -ForegroundColor Gray
-
             $DeviceLog.Autopilot = "Not found"
             $AutopilotDevices = @()
 
@@ -244,7 +242,7 @@ foreach ($CurrentComputer in $ImportedData) {
                 )
             }
             catch {
-                Write-Host "Error searching for $CleanSerial in Autopilot" -ForegroundColor Red
+                Write-Host "Error finding Autopilot record" -ForegroundColor Red
                 throw
             }
 
@@ -286,23 +284,30 @@ foreach ($CurrentComputer in $ImportedData) {
 
                             Write-Host "Deleted Azure AD device $($AADDevice.Id)" -ForegroundColor Green
                         }
+                        else {
+                            $DeviceLog.AzureAD = "Not found"
+                            Write-Host "No Azure AD device found" -ForegroundColor DarkGray
+                        }
                     }
                     catch {
                         $DeviceLog.AzureAD = "Error deleting"
-
-                        Write-Host "Error deleting Azure AD device for $CleanSerial" -ForegroundColor Red
+                        Write-Host "Error deleting Azure AD device" -ForegroundColor Red
                     }
+                }
+                else {
+                    $DeviceLog.AzureAD = "Not found"
+                    Write-Host "No linked Azure AD device found" -ForegroundColor DarkGray
                 }
             }
 
             if (-not $AutopilotDevices) {
-                Write-Host "No Autopilot records found for $CleanSerial" -ForegroundColor DarkGray
+                Write-Host "No Autopilot record found" -ForegroundColor DarkGray
             }
         }
         catch {
             $DeviceLog.Autopilot = "Error finding"
 
-            Write-Host "Error processing $CleanSerial in Autopilot/AAD" -ForegroundColor Red
+            Write-Host "Error processing Autopilot/Azure AD removal" -ForegroundColor Red
         }
     }
 
