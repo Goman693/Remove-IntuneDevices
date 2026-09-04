@@ -171,12 +171,6 @@ $Count = 0
 
 foreach ($CurrentComputer in $ImportedData) {
     $Count++
-    $Percent = [int](($Count / $Total) * 100)
-
-    Write-Progress `
-        -Activity "Removing Devices from Intune" `
-        -Status "$Count of $Total ($Percent%)" `
-        -PercentComplete $Percent
 
     $SerialNumber = $CurrentComputer.SerialNumber.ToUpper()
     $CleanSerial = ($SerialNumber -replace '[^0-9A-Za-z-]', '').Trim()
@@ -192,7 +186,7 @@ foreach ($CurrentComputer in $ImportedData) {
         AzureAD      = "Not attempted"
     }
 
-    Write-Host "Processing $CleanSerial..." -ForegroundColor Cyan
+    Write-Host "`nProcessing device $Count of $Total`: $CleanSerial" -ForegroundColor Cyan
 
     # --- Intune Removal ---
     try {
