@@ -113,7 +113,28 @@ if ($Interactive) {
 }
 
 # --- Validate CSV structure ---
-if (-not $ImportedData -or "SerialNumber" -notin ($ImportedData[0].psobject.Properties).Name) {
+if (-not $Interactive) {
+    $HeaderLine = Get-Content -Path $CSVPath -First 1
+
+    if ([string]::IsNullOrWhiteSpace($HeaderLine)) {
+        Write-Host "CSV is empty. Nothing to process." -ForegroundColor Yellow
+        exit
+    }
+
+    $Headers = $HeaderLine.Split(',').Trim('"', ' ')
+
+    if ("SerialNumber" -notin $Headers) {
+        Write-Host "CSV must contain a 'SerialNumber' column." -ForegroundColor Red
+        exit
+    }
+}
+
+if (-not $ImportedData) {
+    Write-Host "No devices found in the CSV. Nothing to process." -ForegroundColor Yellow
+    exit
+}
+
+if ("SerialNumber" -notin ($ImportedData[0].psobject.Properties).Name) {
     Write-Host "CSV must contain a 'SerialNumber' column." -ForegroundColor Red
     exit
 }
@@ -160,6 +181,7 @@ Connect-MgGraph `
     -Scopes "DeviceManagementServiceConfig.ReadWrite.All",
             "DeviceManagementManagedDevices.ReadWrite.All",
             "Directory.AccessAsUser.All" `
+    -NoWelcome `
     -ErrorAction Stop
 
 # --- Process devices ---
