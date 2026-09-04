@@ -389,7 +389,16 @@ foreach ($CurrentComputer in $ImportedData) {
             }
         }
         catch {
-            $DeviceLog.Autopilot = "Error finding"
+            # Preserve a detailed Autopilot lookup error if one was already captured.
+            if ($DeviceLog.Autopilot -notlike "Error finding:*") {
+                $ErrorMessage = $_.Exception.Message
+
+                if ($_.ErrorDetails.Message) {
+                    $ErrorMessage = $_.ErrorDetails.Message
+                }
+
+                $DeviceLog.Autopilot = "Error processing: $ErrorMessage"
+            }
 
             Write-Host "Error processing Autopilot/Azure AD removal" -ForegroundColor Red
         }
