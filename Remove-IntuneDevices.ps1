@@ -23,8 +23,7 @@
     Requires Microsoft.Graph.Intune module and appropriate Graph permissions.
 #>
 
-[CmdletBinding(DefaultParameterSetName = "All")]
-Param (
+param (
     [Parameter(HelpMessage = "Path to CSV file with column named SerialNumber", Position = 0)]
     [string] $CSVPath,
 
@@ -36,8 +35,6 @@ Param (
 )
 
 # --- Determine script directory ---
-# $PSScriptRoot points to the folder containing this .ps1 file.
-# Fall back to the current directory if the code is being run interactively.
 $ScriptDirectory = if ($PSScriptRoot) {
     $PSScriptRoot
 }
