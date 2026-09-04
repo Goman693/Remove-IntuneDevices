@@ -264,7 +264,17 @@ foreach ($CurrentComputer in $ImportedData) {
                 )
             }
             catch {
-                Write-Host "Error finding Autopilot record" -ForegroundColor Red
+                $ErrorMessage = $_.Exception.Message
+
+                if ($_.ErrorDetails.Message) {
+                    $ErrorMessage = $_.ErrorDetails.Message
+                }
+
+                $DeviceLog.Autopilot = "Error finding: $ErrorMessage"
+
+                Write-Host "Error finding Autopilot record:" -ForegroundColor Red
+                Write-Host $ErrorMessage -ForegroundColor Red
+
                 throw
             }
 
