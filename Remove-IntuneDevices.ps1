@@ -1,3 +1,4 @@
+```powershell
 <#
 .SYNOPSIS
     Removes devices from Intune, optionally including Autopilot and Azure AD.
@@ -186,7 +187,7 @@ foreach ($CurrentComputer in $ImportedData) {
         AzureAD      = "Not attempted"
     }
 
-    Write-Host "`nProcessing device $Count of $Total`: $CleanSerial" -ForegroundColor Cyan
+    Write-Host "`nProcessing device $Count of ${Total}: $CleanSerial" -ForegroundColor Cyan
 
     # --- Intune Removal ---
     try {
@@ -194,7 +195,7 @@ foreach ($CurrentComputer in $ImportedData) {
 
         $IntuneDevices = Get-MgDeviceManagementManagedDevice `
             -Filter "SerialNumber eq '$CleanSerial'" `
-            -ErrorAction SilentlyContinue
+            -ErrorAction Stop
 
         foreach ($IntuneDevice in $IntuneDevices) {
             $DeviceLog.Intune = "Found"
@@ -202,16 +203,16 @@ foreach ($CurrentComputer in $ImportedData) {
             try {
                 Remove-MgDeviceManagementManagedDevice `
                     -ManagedDeviceId $IntuneDevice.Id `
-                    -ErrorAction SilentlyContinue
+                    -ErrorAction Stop
 
                 $DeviceLog.Intune = "Deleted"
 
-                Write-Host "Deleted $($IntuneDevice.deviceName) from Intune" -ForegroundColor Green
+                Write-Host "Deleted $($IntuneDevice.DeviceName) from Intune" -ForegroundColor Green
             }
             catch {
                 $DeviceLog.Intune = "Error deleting"
 
-                Write-Host "Error deleting $($IntuneDevice.deviceName) from Intune" -ForegroundColor Red
+                Write-Host "Error deleting $($IntuneDevice.DeviceName) from Intune" -ForegroundColor Red
             }
         }
 
@@ -225,7 +226,7 @@ foreach ($CurrentComputer in $ImportedData) {
         Write-Host "Error finding $CleanSerial in Intune" -ForegroundColor Red
     }
 
-    # --- Autopilot + AAD Removal ---
+    # --- Autopilot + Azure AD Removal ---
     if ($AutopilotAAD) {
         try {
             Write-Host "Searching Autopilot for $CleanSerial..." -ForegroundColor Gray
@@ -257,7 +258,7 @@ foreach ($CurrentComputer in $ImportedData) {
                 try {
                     Remove-MgDeviceManagementWindowsAutopilotDeviceIdentity `
                         -WindowsAutopilotDeviceIdentityId $AutopilotDevice.Id `
-                        -ErrorAction SilentlyContinue
+                        -ErrorAction Stop
 
                     $DeviceLog.Autopilot = "Deleted"
 
@@ -283,7 +284,7 @@ foreach ($CurrentComputer in $ImportedData) {
 
                             Remove-MgDevice `
                                 -DeviceId $AADDevice.Id `
-                                -ErrorAction SilentlyContinue
+                                -ErrorAction Stop
 
                             $DeviceLog.AzureAD = "Deleted"
 
@@ -319,3 +320,4 @@ foreach ($CurrentComputer in $ImportedData) {
 
 Write-Host "`nAll operations completed. Log saved to:" -ForegroundColor Cyan
 Write-Host $LogPath -ForegroundColor Yellow
+```
