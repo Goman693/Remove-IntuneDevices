@@ -19,7 +19,7 @@
     Prompts for manual serial number entry instead of reading from a CSV.
 
 .NOTES
-    Requires Microsoft Graph PowerShell modules and a tenant-specific public-client app registration with the required delegated permissions.
+    Requires the current Microsoft Graph PowerShell SDK and access to the tenant-specific Endpoint Device Removal Tool app registration.
 #>
 
 param (
@@ -172,7 +172,7 @@ $LogPath = Join-Path $LogDirectory (
 Write-Host "Results will be logged to " -NoNewline
 Write-Host $LogPath -ForegroundColor Cyan
 
-# --- Microsoft Graph tenant configuration ---
+# --- Graph setup ---
 # Create a single-tenant public-client app registration in Microsoft Entra ID,
 # then paste its Application (client) ID and Directory (tenant) ID below.
 $GraphClientId = ""
@@ -182,20 +182,118 @@ if ([string]::IsNullOrWhiteSpace($GraphClientId) -or
     [string]::IsNullOrWhiteSpace($GraphTenantId)) {
 
     Write-Host "Microsoft Graph configuration is incomplete." -ForegroundColor Red
-    Write-Host "Set `$GraphClientId and `$GraphTenantId near the top of the Graph setup section, then run the script again." -ForegroundColor Yellow
+    Write-Host "Set `$GraphClientId and `$GraphTenantId in the Graph setup section, then run the script again." -ForegroundColor Yellow
     exit 1
 }
 
-Write-Host "Importing Microsoft Graph modules..."
-Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
-Import-Module Microsoft.Graph.Intune -ErrorAction Stop
+$RequiredGraphModules = @(
+    "Microsoft.Graph.Authentication",
+    "Microsoft.Graph.DeviceManagement",
+    "Microsoft.Graph.DeviceManagement.Enrollment",
+    "Microsoft.Graph.Identity.DirectoryManagement"
+)
 
-Write-Host "Authenticating with Microsoft Graph..."
-Set-MgGraphOption -DisableLoginByWAM $false
+# --- Check Microsoft Graph PowerShell version ---
+Write-Host "Checking Microsoft Graph PowerShell version..."
+
+try {
+    $LatestGraphPackage = Find-Module Microsoft.Graph `
+        -Repository PSGallery `
+        -ErrorAction Stop
+
+    $LatestGraphVersion = [version]$LatestGraphPackage.Version
+}
+catch {
+    Write-Host "Unable to check the latest Microsoft Graph PowerShell version from PowerShell Gallery." -ForegroundColor Red
+    Write-Host $_.Exception.Message -ForegroundColor Red
+    exit 1
+}
+
+$GraphUpdateRequired = $false
+
+foreach ($ModuleName in $RequiredGraphModules) {
+    $InstalledModule = Get-Module $ModuleName -ListAvailable |
+        Sort-Object Version -Descending |
+        Select-Object -First 1
+
+    if (-not $InstalledModule) {
+        Write-Host "$ModuleName is not installed." -ForegroundColor Yellow
+        $GraphUpdateRequired = $true
+        continue
+    }
+
+    if ([version]$InstalledModule.Version -lt $LatestGraphVersion) {
+        Write-Host "$ModuleName is outdated: $($InstalledModule.Version) -> $LatestGraphVersion" -ForegroundColor Yellow
+        $GraphUpdateRequired = $true
+    }
+}
+
+if ($GraphUpdateRequired) {
+    $LoadedGraphModules = @(Get-Module Microsoft.Graph.*)
+
+    Write-Host "Installing Microsoft Graph PowerShell $LatestGraphVersion for the current user..." -ForegroundColor Cyan
+
+    try {
+        foreach ($ModuleName in $RequiredGraphModules) {
+            Install-Module $ModuleName `
+                -RequiredVersion $LatestGraphVersion `
+                -Repository PSGallery `
+                -Scope CurrentUser `
+                -Force `
+                -AllowClobber `
+                -ErrorAction Stop
+        }
+    }
+    catch {
+        Write-Host "Failed to install/update Microsoft Graph PowerShell." -ForegroundColor Red
+        Write-Host $_.Exception.Message -ForegroundColor Red
+        exit 1
+    }
+
+    if ($LoadedGraphModules.Count -gt 0) {
+        Write-Host "Microsoft Graph was updated, but Graph modules were already loaded in this PowerShell session." -ForegroundColor Yellow
+        Write-Host "Close PowerShell, reopen it, and run the script again so the new version can load cleanly." -ForegroundColor Yellow
+        exit
+    }
+
+    Write-Host "Microsoft Graph PowerShell updated successfully to $LatestGraphVersion." -ForegroundColor Green
+}
+else {
+    Write-Host "Microsoft Graph PowerShell is up to date ($LatestGraphVersion)." -ForegroundColor Green
+}
+
+# --- Import current Microsoft Graph modules ---
+Write-Host "Importing Microsoft Graph modules..."
+
+foreach ($ModuleName in $RequiredGraphModules) {
+    Import-Module $ModuleName `
+        -RequiredVersion $LatestGraphVersion `
+        -ErrorAction Stop
+}
+
+# --- Select delegated scopes needed for this run ---
+$GraphScopes = @(
+    "DeviceManagementManagedDevices.ReadWrite.All"
+)
+
+if ($AutopilotAAD) {
+    $GraphScopes += @(
+        "DeviceManagementServiceConfig.ReadWrite.All"
+        "Directory.AccessAsUser.All"
+    )
+}
+
+Write-Host "Authenticating with Endpoint Device Removal Tool..."
+
+# Force the custom public-client app to use InteractiveBrowserCredential
+# instead of Windows Web Account Manager (WAM).
+Set-MgGraphOption -DisableLoginByWAM $true
 
 Connect-MgGraph `
     -ClientId $GraphClientId `
     -TenantId $GraphTenantId `
+    -Scopes $GraphScopes `
+    -ContextScope Process `
     -Verbose `
     -ErrorAction Stop
 
