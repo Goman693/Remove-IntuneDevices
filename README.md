@@ -12,28 +12,49 @@ The script uses **delegated Microsoft Graph authentication** through your organi
 - Sanitizes serial numbers before Graph queries.
 - Writes results to a timestamped CSV log.
 - Keeps the five newest log files.
-- Uses Windows Authentication Manager (WAM) for interactive Microsoft Graph sign-in.
+- Checks PowerShell Gallery for the latest Microsoft Graph PowerShell version and installs/updates the required Graph modules when necessary.
+- Uses interactive browser authentication for Microsoft Graph sign-in.
 
 > **Warning:** This script performs destructive device-deletion operations. Test it in your environment and make sure the users running it have only the permissions and roles they actually require.
 
 ## Prerequisites
 
 - Windows PowerShell 5.1 or PowerShell 7+ on Windows.
-- Microsoft Graph PowerShell installed.
+- Access to PowerShell Gallery (`PSGallery`) so the script can check and install/update the required Microsoft Graph modules.
 - An account with the appropriate Intune / Entra administrative rights.
 - A single-tenant Microsoft Entra app registration configured for delegated Microsoft Graph access.
 - An administrator who can grant tenant-wide consent to the required delegated permissions.
 
-## 1. Install Microsoft Graph PowerShell
+## 1. Microsoft Graph PowerShell
 
-Open **Terminal (Admin)** or an elevated PowerShell window and run:
+The script automatically checks PowerShell Gallery for the latest `Microsoft.Graph` release and verifies that the Graph modules it uses are installed at that version.
 
-```powershell
-Install-Module Microsoft.Graph -Scope AllUsers -Force
-Install-Module Microsoft.Graph.Intune -Scope AllUsers -Force
+The required modules are:
+
+```text
+Microsoft.Graph.Authentication
+Microsoft.Graph.DeviceManagement
+Microsoft.Graph.DeviceManagement.Enrollment
+Microsoft.Graph.Identity.DirectoryManagement
 ```
 
-If your execution policy prevents local scripts from running, configure an execution policy appropriate for your organization rather than disabling PowerShell security globally.
+If they are missing or outdated, the script installs/updates them for the **current user**.
+
+If Microsoft Graph modules were already loaded in the current PowerShell session when an update was required, the script will ask you to close PowerShell, reopen it, and run the script again so the updated modules can load cleanly.
+
+If you want to install Microsoft Graph manually before running the script:
+
+```powershell
+Install-Module Microsoft.Graph -Scope CurrentUser -Force -AllowClobber
+```
+
+If your execution policy prevents the downloaded script from running, unblock the trusted script file:
+
+```powershell
+Unblock-File -Path ".\Remove-IntuneDevices.ps1"
+```
+
+Do not weaken your organization's execution policy globally just to run this script.
 
 ## 2. Create the Entra app registration
 
@@ -48,19 +69,25 @@ In the **Microsoft Entra admin center**:
    http://localhost
    ```
 
+   `http://localhost` must be registered as a **Mobile and desktop application / public client** redirect URI, **not** as a Web redirect URI.
+
 5. Select **Register**.
 6. From the app's **Overview** page, copy:
    - **Application (client) ID**
    - **Directory (tenant) ID**
-7. Go to **Authentication > Add a platform > Mobile and desktop applications** and add:
+7. Under **Authentication**, enable **Allow public client flows** if it is not already enabled.
 
-   ```text
-   ms-appx-web://Microsoft.AAD.BrokerPlugin/<APPLICATION-CLIENT-ID>
-   ```
+### Optional WAM redirect
 
-   Replace `<APPLICATION-CLIENT-ID>` with the Application (client) ID from the Overview page.
+This script intentionally uses `InteractiveBrowserCredential` instead of Windows Web Account Manager (WAM), so the WAM broker redirect is not required for the script itself.
 
-8. Under **Authentication**, enable **Allow public client flows** if it is not already enabled.
+If you also want the app registration to support WAM in other tools or future versions, add this under **Authentication > Add a platform > Mobile and desktop applications**:
+
+```text
+ms-appx-web://Microsoft.AAD.BrokerPlugin/<APPLICATION-CLIENT-ID>
+```
+
+Replace `<APPLICATION-CLIENT-ID>` with the Application (client) ID from the app's Overview page.
 
 ## 3. Add Microsoft Graph delegated permissions
 
@@ -123,7 +150,7 @@ The normal graphical workflow is:
 
 - Choose a CSV in the first file picker to remove those devices from **Intune only**.
 - Click **Cancel** in the first picker to open a second picker; choosing a CSV there removes matching devices from **Intune, Autopilot, and Entra ID**.
-- Sign in with your organizational Microsoft account when prompted.
+- Sign in with your organizational Microsoft account in the browser when prompted.
 
 You can also specify a CSV directly:
 
@@ -155,44 +182,68 @@ The log records the result for each serial number in Intune, Autopilot, and Entr
 
 ## Authentication model
 
-This script uses delegated authentication:
+This script uses delegated authentication with the organization's public-client app registration and explicitly disables WAM so Microsoft Graph uses interactive browser authentication:
 
 ```powershell
-Set-MgGraphOption -DisableLoginByWAM $false
+Set-MgGraphOption -DisableLoginByWAM $true
 
 Connect-MgGraph `
     -ClientId $GraphClientId `
-    -TenantId $GraphTenantId
+    -TenantId $GraphTenantId `
+    -Scopes $GraphScopes `
+    -ContextScope Process
 ```
 
-The signed-in user's own Intune / Entra permissions still apply. The app registration identifies the OAuth client and defines the Microsoft Graph permissions that the organization has approved for the tool.
+For an **Intune-only** run, the script requests:
+
+```text
+DeviceManagementManagedDevices.ReadWrite.All
+```
+
+When `-AutopilotAAD` is used, it additionally requests:
+
+```text
+DeviceManagementServiceConfig.ReadWrite.All
+Directory.AccessAsUser.All
+```
+
+The signed-in user's own Intune / Entra permissions still apply. The app registration identifies the OAuth client and defines which Microsoft Graph delegated permissions the organization has approved for the tool.
 
 No application secret or certificate is required.
 
 ## Troubleshooting
+
+### `AADSTS7000218` / asks for a client secret
+
+If interactive browser authentication returns an error similar to:
+
+```text
+AADSTS7000218: The request body must contain the following parameter:
+'client_assertion' or 'client_secret'
+```
+
+check the app registration's **Authentication** page.
+
+`http://localhost` must be configured under **Mobile and desktop applications / public client**, not under **Web**.
 
 ### "Need admin approval" or `AADSTS90094`
 
 Verify that:
 
 - The script contains the correct client ID and tenant ID.
-- The three delegated Microsoft Graph permissions were added to the app registration.
+- The required delegated Microsoft Graph permissions were added to the app registration.
 - Tenant-wide admin consent was granted.
 - If **Assignment required?** is enabled, the signed-in user or one of their groups is assigned to the Enterprise application.
 
-### `Set-MgGraphOption` is not recognized
+### Microsoft Graph modules are outdated
 
-Update or reinstall Microsoft Graph PowerShell:
-
-```powershell
-Update-Module Microsoft.Graph
-```
-
-If the module was not already installed:
+The script normally updates its required modules automatically. If automatic installation fails, run:
 
 ```powershell
-Install-Module Microsoft.Graph -Scope AllUsers -Force
+Install-Module Microsoft.Graph -Scope CurrentUser -Force -AllowClobber
 ```
+
+Then close PowerShell completely, reopen it, and run the script again.
 
 ### Authentication uses the wrong account
 
