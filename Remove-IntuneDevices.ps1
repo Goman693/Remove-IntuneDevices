@@ -19,7 +19,7 @@
     Prompts for manual serial number entry instead of reading from a CSV.
 
 .NOTES
-    Requires Microsoft.Graph.Intune module and appropriate Graph permissions.
+    Requires Microsoft Graph PowerShell modules and a tenant-specific public-client app registration with the required delegated permissions.
 #>
 
 param (
@@ -172,16 +172,31 @@ $LogPath = Join-Path $LogDirectory (
 Write-Host "Results will be logged to " -NoNewline
 Write-Host $LogPath -ForegroundColor Cyan
 
-# --- Graph setup ---
-Write-Host "Importing Microsoft Graph Intune module..."
+# --- Microsoft Graph tenant configuration ---
+# Create a single-tenant public-client app registration in Microsoft Entra ID,
+# then paste its Application (client) ID and Directory (tenant) ID below.
+$GraphClientId = ""
+$GraphTenantId = ""
+
+if ([string]::IsNullOrWhiteSpace($GraphClientId) -or
+    [string]::IsNullOrWhiteSpace($GraphTenantId)) {
+
+    Write-Host "Microsoft Graph configuration is incomplete." -ForegroundColor Red
+    Write-Host "Set `$GraphClientId and `$GraphTenantId near the top of the Graph setup section, then run the script again." -ForegroundColor Yellow
+    exit 1
+}
+
+Write-Host "Importing Microsoft Graph modules..."
+Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
 Import-Module Microsoft.Graph.Intune -ErrorAction Stop
 
 Write-Host "Authenticating with Microsoft Graph..."
+Set-MgGraphOption -DisableLoginByWAM $false
+
 Connect-MgGraph `
-    -Scopes "DeviceManagementServiceConfig.ReadWrite.All",
-            "DeviceManagementManagedDevices.ReadWrite.All",
-            "Directory.AccessAsUser.All" `
-    -NoWelcome `
+    -ClientId $GraphClientId `
+    -TenantId $GraphTenantId `
+    -Verbose `
     -ErrorAction Stop
 
 # --- Process devices ---
