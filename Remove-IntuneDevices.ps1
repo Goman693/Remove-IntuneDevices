@@ -294,6 +294,7 @@ Connect-MgGraph `
     -TenantId $GraphTenantId `
     -Scopes $GraphScopes `
     -ContextScope Process `
+    -NoWelcome `
     -Verbose `
     -ErrorAction Stop
 
