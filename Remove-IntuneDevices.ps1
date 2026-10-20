@@ -6,6 +6,7 @@
     - Accepts a CSV file with a "SerialNumber" column, or allows interactive input.
     - Sanitizes serial numbers to prevent Graph query errors.
     - Optionally removes devices from Intune, Autopilot, and Azure AD.
+    - Interactive mode prompts for Intune-only or full Intune/Autopilot/Entra removal.
     - Logs all results with automatic log rotation (keeps 5 newest logs).
     - CSV picker automatically opens to the directory containing this script.
 
@@ -17,6 +18,7 @@
 
 .PARAMETER Interactive
     Prompts for manual serial number entry instead of reading from a CSV.
+    If -AutopilotAAD is not explicitly supplied, prompts for the removal scope.
 
 .NOTES
     Requires the current Microsoft Graph PowerShell SDK and access to the tenant-specific Endpoint Device Removal Tool app registration.
@@ -72,12 +74,25 @@ if (-Not $CSVPath -and -Not $Interactive) {
 
         $CSVPath = Get-CsvPath -Title "CSV to remove from Intune, Autopilot, and AzureAD. Must have SerialNumber column."
     }
+
+    # User cancelled both file pickers
+    if (-Not $CSVPath) {
+        Write-Host "No CSV selected. Nothing to process." -ForegroundColor Yellow
+        exit
+    }
 }
 
 # --- Import CSV or enter serials manually ---
 if (-Not $Interactive) {
     try {
-        $ImportedData = Import-Csv -Path $CSVPath -Encoding UTF8
+        $CSVFile = Get-Item -Path $CSVPath -ErrorAction Stop
+
+        if ($CSVFile.Length -eq 0) {
+            Write-Host "CSV is empty. Nothing to process." -ForegroundColor Yellow
+            exit
+        }
+
+        $ImportedData = Import-Csv -Path $CSVPath -Encoding UTF8 -ErrorAction Stop
 
         Write-Host "Import successful. Devices will be removed from " -NoNewline
 
@@ -89,13 +104,43 @@ if (-Not $Interactive) {
         }
     }
     catch {
-        Write-Host "Error importing CSV. Switching to interactive mode." -ForegroundColor Red
-        $Interactive = $true
+        Write-Host "Error importing CSV:" -ForegroundColor Red
+        Write-Host $_.Exception.Message -ForegroundColor Red
+        exit 1
     }
 }
 
 if ($Interactive) {
-    Write-Host "Interactive mode enabled. Enter serial numbers to remove. Press Enter on a blank line to finish."
+    # If -AutopilotAAD was not explicitly supplied, ask which removal scope to use.
+    if (-not $PSBoundParameters.ContainsKey("AutopilotAAD")) {
+        Write-Host ""
+        Write-Host "Choose removal scope:" -ForegroundColor Cyan
+        Write-Host "  [1] Intune only"
+        Write-Host "  [2] Intune, Autopilot, and Azure AD"
+
+        do {
+            $RemovalChoice = Read-Host "Enter 1 or 2"
+
+            if ($RemovalChoice -notin @("1", "2")) {
+                Write-Host "Please enter 1 or 2." -ForegroundColor Yellow
+            }
+        }
+        until ($RemovalChoice -in @("1", "2"))
+
+        $AutopilotAAD = ($RemovalChoice -eq "2")
+    }
+
+    Write-Host ""
+    Write-Host "Interactive mode enabled. Devices will be removed from " -NoNewline
+
+    if ($AutopilotAAD) {
+        Write-Host "Intune, Autopilot, and Azure AD" -ForegroundColor Cyan
+    }
+    else {
+        Write-Host "Intune" -ForegroundColor Cyan
+    }
+
+    Write-Host "Enter serial numbers to remove. Press Enter on a blank line to finish."
 
     $ImportedData = @()
 
@@ -130,7 +175,12 @@ if (-not $Interactive) {
 }
 
 if (-not $ImportedData) {
-    Write-Host "No devices found in the CSV. Nothing to process." -ForegroundColor Yellow
+    if ($Interactive) {
+        Write-Host "No serial numbers entered. Nothing to process." -ForegroundColor Yellow
+    }
+    else {
+        Write-Host "CSV contains no device rows. Nothing to process." -ForegroundColor Yellow
+    }
     exit
 }
 
