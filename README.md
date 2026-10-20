@@ -9,6 +9,7 @@ The script uses **delegated Microsoft Graph authentication** through your organi
 - Reads serial numbers from a CSV containing a `SerialNumber` column, or accepts serial numbers interactively.
 - Removes matching managed-device records from Intune.
 - Optionally removes matching Windows Autopilot records and their linked Entra ID device objects.
+- In interactive mode, prompts you to choose between **Intune only** and **Intune + Autopilot + Entra ID** before entering serial numbers.
 - Sanitizes serial numbers before Graph queries.
 - Writes results to a timestamped CSV log.
 - Keeps the five newest log files.
@@ -152,6 +153,10 @@ The normal graphical workflow is:
 - Click **Cancel** in the first picker to open a second picker; choosing a CSV there removes matching devices from **Intune, Autopilot, and Entra ID**.
 - Sign in with your organizational Microsoft account in the browser when prompted.
 
+Canceling both file-selection dialogs exits the script without performing any operations. Interactive mode is only entered intentionally by using `-Interactive`.
+
+Empty CSV files and CSVs containing no device rows are rejected, and the script exits without connecting to Microsoft Graph.
+
 You can also specify a CSV directly:
 
 ```powershell
@@ -170,9 +175,23 @@ Or enter serial numbers manually:
 .\Remove-IntuneDevices.ps1 -Interactive
 ```
 
+Interactive mode will prompt you to choose the removal scope before entering serial numbers:
+
+```text
+Choose removal scope:
+  [1] Intune only
+  [2] Intune, Autopilot, and Azure AD
+```
+
+If you already know you want full removal, you can skip the scope prompt:
+
+```powershell
+.\Remove-IntuneDevices.ps1 -Interactive -AutopilotAAD
+```
+
 ## Logging
 
-A timestamped log is written to the same directory as the selected CSV:
+A timestamped log is written to the same directory as the selected CSV. In interactive mode, the log is written to the script directory:
 
 ```text
 Log_yyyy-MM-dd_HH-mm-ss.csv
@@ -212,6 +231,28 @@ The signed-in user's own Intune / Entra permissions still apply. The app registr
 No application secret or certificate is required.
 
 ## Troubleshooting
+
+### Script cannot be loaded / "not digitally signed"
+
+If PowerShell reports that the downloaded script is not digitally signed or cannot be loaded because of the execution policy, and you trust the copy you downloaded, unblock that specific file:
+
+```powershell
+Unblock-File -Path ".\Remove-IntuneDevices.ps1"
+```
+
+If the script is stored elsewhere, use its full path:
+
+```powershell
+Unblock-File -Path "C:\Path\To\Remove-IntuneDevices.ps1"
+```
+
+This removes the internet-downloaded file marker without weakening the system's execution policy globally.
+
+If the script is still blocked afterward, check whether execution policy is being enforced by Group Policy:
+
+```powershell
+Get-ExecutionPolicy -List
+```
 
 ### `AADSTS7000218` / asks for a client secret
 
